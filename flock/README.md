@@ -10,6 +10,16 @@ A Herdr skill that also manages git worktrees. It's a superset of Herdr's built-
   - `wt-cleanup-candidates.sh`: read-only. For each linked worktree: reasons to remove it, blockers, and proposed commands.
   - `wt-spawn.sh`: runs `worktree create`, then `agent start`, then `agent prompt`. It's a **dry run unless you pass `--yes`**.
 
+## Install
+
+With the [skills.sh](https://skills.sh/) CLI:
+
+```bash
+npx skills add Tarektouati/skills@flock
+```
+
+Add `-g` to install globally (user-level) instead of into the current project. It needs `herdr`, `jq` and `git` on your `PATH`, and `gh` if you want PR info.
+
 ## Refresh the upstream snapshot
 
 After upgrading herdr:

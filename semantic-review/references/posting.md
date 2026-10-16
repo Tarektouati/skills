@@ -56,6 +56,12 @@ glab api "projects/<project>/repository/commits/<sha>/diff"
 
 Check every comment's `path:line` against the hunks of the PR or MR diff before posting. A line can be anchored when it falls inside a hunk on the new side: for `@@ -a,b +c,d @@`, that's lines `c` to `c+d-1` of the new file. Move every other comment into the body or summary note before the first post, and tell the user which ones moved.
 
+GitLab also needs to know what kind of line it is. Walk the hunk from `-a` and `+c`. A `+` line advances only the new counter, a `-` line advances only the old counter, and a context (` `) line advances both. For each anchored comment, record:
+
+- whether the line is **added** (`+`) or **context** (` `),
+- the `old_line` (context lines only) and the `new_line`,
+- the file's `old_path` and `new_path`. They differ for a renamed file.
+
 ## GitHub (`gh`)
 
 ### Context
@@ -87,11 +93,21 @@ Skip a new comment when an existing one by you has the same path, the same line,
 
 Check these in order and take the first that matches:
 
-1. Questions still open, or the user is reviewing their own PR → `COMMENT`. GitHub rejects `APPROVE` and `REQUEST_CHANGES` on your own PR.
-2. Any Crucial or Important → `REQUEST_CHANGES`.
-3. Only Suggestion, Hint or Remark → `APPROVE`.
+1. Questions still open → `COMMENT`.
+2. Any Crucial or Important → `REQUEST_CHANGES`, or `COMMENT` on your own PR (GitHub rejects `REQUEST_CHANGES` there).
+3. Only Suggestion, Hint or Remark, or no comments at all → `APPROVE`.
 
 "Open Questions" means the comments being posted include at least one Question.
+
+### Approval refused
+
+Always try `APPROVE` when rule 3 matches, even on your own PR. If GitHub refuses it (your own PR, or a rule that blocks your approval), nothing was posted. Send the same review again with `"event": "COMMENT"`, and add this line to the body after the verdict:
+
+```
+Approval wasn't possible (<reason from the API error>). LGTM: no blocking issues found.
+```
+
+Tell the user that the approval was refused and why. Treat this as the one expected refusal. Any other error still follows the "don't retry blindly" rule below.
 
 ### Post one review
 
@@ -143,6 +159,15 @@ Then use the same rule as on GitHub: same path, same line, same label and simila
 
 ### Inline comment
 
+Take `old_path`, `new_path` and each line's kind from the MR diff. The per-file list carries both paths and the hunk text:
+
+```bash
+glab api "projects/<project>/merge_requests/<iid>/diffs" --paginate \
+  | jq '.[] | {old_path, new_path, renamed_file, diff}'
+```
+
+Use the anchorable-lines walk above on each file's `diff`.
+
 One call per comment. `glab api` doesn't turn `position[...]` field names into a nested object on a POST, so send a JSON body with `--input`. Write the payload to a file in the scratchpad:
 
 ```json
@@ -153,12 +178,17 @@ One call per comment. `glab api` doesn't turn `position[...]` field names into a
     "base_sha": "<base_sha>",
     "start_sha": "<start_sha>",
     "head_sha": "<head_sha>",
-    "old_path": "src/foo.ts",
+    "old_path": "src/old_name.ts",
     "new_path": "src/foo.ts",
+    "old_line": 40,
     "new_line": 42
   }
 }
 ```
+
+- **Added line:** send `new_line` only and leave out `old_line`.
+- **Context (unchanged) line:** send both `old_line` and `new_line`. GitLab rejects a context line that has only `new_line`.
+- Always send the file's real `old_path`. For a file that wasn't renamed, it equals `new_path`.
 
 ```bash
 glab api "projects/<project>/merge_requests/<iid>/discussions" -X POST \
@@ -173,10 +203,18 @@ Check that the created note has a `position`. If the API rejects the position, o
 glab mr note <iid> -R <project-url> -m "<verdict line + unanchored comments>"
 ```
 
-This matches the GitHub event: open Questions block approval.
+This matches the GitHub event: open Questions block approval. Post in this order: inline comments, then the approval (if any), then the summary note. That way the note can report the outcome of the approval.
 
 | Verdict | Action |
 |---|---|
-| `OK to merge`, no Questions being posted | `glab mr approve <iid> -R <project-url>` |
+| `OK to merge`, no Questions being posted (including no comments at all) | `glab mr approve <iid> -R <project-url>` |
 | `OK to merge` with Questions being posted | Post the comments and the summary note. Don't approve. |
 | `Changes expected` or `Blocks merge` | Post the comments and the summary note. Don't approve. If the user already approved, offer `glab mr revoke <iid> -R <project-url>` and wait for them to confirm. |
+
+If `glab mr approve` is refused (your own MR, or project approval rules), add this line to the summary note after the verdict, and tell the user:
+
+```
+Approval wasn't possible (<reason from the error>). LGTM: no blocking issues found.
+```
+
+When there are no comments at all, that note is the only thing posted.

@@ -14,7 +14,7 @@ Format each comment as `**Label:** <one direct sentence>`, optionally followed b
 - data loss or corruption
 - a broken build, migration or deploy
 
-**Must** state the concrete failure: the inputs or state, then the wrong outcome. If you can't name a reachable path, it's not Crucial.
+**Must** state the concrete failure: the trigger (inputs, state, or the build, migration or deploy step), then the wrong outcome. If you can't name a concrete trigger that actually happens, it's not Crucial.
 
 ## Important
 

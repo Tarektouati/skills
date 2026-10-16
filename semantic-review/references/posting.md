@@ -2,28 +2,86 @@
 
 Post only for PR or MR targets, and only after the user confirms (SKILL.md §5). Local and pasted diffs only print to the terminal.
 
-Each inline comment body keeps its `**Label:**` prefix. The verdict line, and any comments that can't be anchored to a changed line, go in the review body or summary note.
+Each inline comment body keeps its `**Label:**` prefix. The verdict line, and any comments that can't be anchored to a changed line, go in the review body or summary note. Write each unanchored comment there as one line, so that a later run can match it as a duplicate:
+
+```
+- `src/foo.ts:42` **Suggestion:** ...
+```
+
+## Repository
+
+Take the repository from the target, never from the current checkout alone:
+
+- **GitHub URL** `https://github.com/<owner>/<repo>/pull/<n>`: use `<owner>/<repo>`, and pass `-R <owner>/<repo>` to every `gh pr` command. `gh api` paths already name the repo.
+- **GitLab URL** `https://<host>/<group>/<project>/-/merge_requests/<iid>`: the project is `<group>/<project>`, including any subgroups. Pass `-R https://<host>/<group>/<project>` to every `glab mr` command. `glab api` has no `-R`, so name the project in the path, URL-encoded (`group%2Fproject`), and add `--hostname <host>` when it isn't gitlab.com. Don't use `:id`: it always resolves to the current checkout.
+- **A bare number, or the branch's own PR or MR**: use the current repository (`gh repo view --json nameWithOwner -q .nameWithOwner`, or the `origin` remote for GitLab).
+
+Below, `<owner>/<repo>` and `<project>` (URL-encoded) stand for the result.
+
+## Diff and commits
+
+Review the PR or MR head, not whatever is checked out locally.
+
+```bash
+# GitHub
+gh pr view <n> -R <owner>/<repo> --json headRefOid,baseRefName,baseRefOid,commits
+gh pr diff <n> -R <owner>/<repo>
+
+# GitLab
+glab mr view <iid> -R <project-url> -F json        # diff_refs.base_sha/start_sha/head_sha
+glab mr diff <iid> -R <project-url> --raw
+glab api "projects/<project>/merge_requests/<iid>/commits" --paginate
+```
+
+For commit-by-commit review (large diffs), when the local checkout's `origin` is the same repository, fetch the head and use git:
+
+```bash
+git fetch origin pull/<n>/head            # GitHub
+git fetch origin merge-requests/<iid>/head  # GitLab
+head=$(git rev-parse FETCH_HEAD)          # must equal headRefOid / diff_refs.head_sha
+base=$(git merge-base "$head" origin/<baseRefName>)
+git log --reverse --format=%H "$base..$head"
+git show <sha>                            # each commit
+git show "$head:<path>"                   # final state of a file
+```
+
+If the repository isn't checked out locally, read the commits through the API instead:
+
+```bash
+gh api -H 'Accept: application/vnd.github.diff' "repos/<owner>/<repo>/commits/<sha>"
+glab api "projects/<project>/repository/commits/<sha>/diff"
+```
+
+## Anchorable lines
+
+Check every comment's `path:line` against the hunks of the PR or MR diff before posting. A line can be anchored when it falls inside a hunk on the new side: for `@@ -a,b +c,d @@`, that's lines `c` to `c+d-1` of the new file. Move every other comment into the body or summary note before the first post, and tell the user which ones moved.
 
 ## GitHub (`gh`)
 
 ### Context
 
 ```bash
-gh pr view <n> --json number,url,headRefOid,author,baseRefName -q '.'
+gh pr view <n> -R <owner>/<repo> --json number,url,headRefOid,author,baseRefName
 gh api user -q .login                     # who is reviewing
-gh repo view --json nameWithOwner -q .nameWithOwner
 ```
 
 The PR is your own when `author.login` equals your login.
 
 ### Duplicate detection
 
+Read both your inline comments and your review bodies:
+
 ```bash
 gh api "repos/<owner>/<repo>/pulls/<n>/comments" --paginate \
-  --jq '.[] | select(.user.login=="<me>") | {path, line, body}'
+  --jq '.[] | select(.user.login=="<me>") | {path, line, original_line, body}'
+gh api "repos/<owner>/<repo>/pulls/<n>/reviews" --paginate \
+  --jq '.[] | select(.user.login=="<me>") | .body'
 ```
 
-Skip a new comment when an existing one by you has the same `path`, the same `line`, the same `**Label:**` prefix, and similar text (same point, maybe reworded). List the skipped ones to the user. There's no other state tracking.
+- **Inline comments:** an existing comment matches on line when `line` equals the new comment's line, or, if `line` is `null` (the comment is outdated), when `original_line` does.
+- **Review bodies:** parse the `` - `path:line` **Label:** ... `` lines written there.
+
+Skip a new comment when an existing one by you has the same path, the same line, the same `**Label:**` prefix, and similar text (same point, maybe reworded). List the skipped ones to the user. There's no other state tracking.
 
 ### Review event
 
@@ -47,7 +105,7 @@ gh api "repos/<owner>/<repo>/pulls/<n>/reviews" -X POST --input review.json
 {
   "commit_id": "<headRefOid>",
   "event": "REQUEST_CHANGES",
-  "body": "Changes expected (2 Important)\n\n**Suggestion:** ... (unanchored comments go here)",
+  "body": "Changes expected (2 Important)\n\n- `src/bar.ts:7` **Suggestion:** ... (unanchored comments go here)",
   "comments": [
     { "path": "src/foo.ts", "line": 42, "side": "RIGHT", "body": "**Important:** ..." },
     { "path": "src/foo.ts", "start_line": 50, "line": 54, "side": "RIGHT", "body": "**Suggestion:** ..." }
@@ -55,20 +113,18 @@ gh api "repos/<owner>/<repo>/pulls/<n>/reviews" -X POST --input review.json
 }
 ```
 
-- `line` is the line number in the PR's head version of the file, and it must be inside a diff hunk. Otherwise the API returns 422. Move a comment that can't be anchored into `body`.
-- If the review fails with 422, find the comment that caused it, move it into `body`, and retry once. Tell the user that you did.
+- `line` is the line number in the PR's head version of the file. Every `line` (and `start_line`) must have passed the anchorable-lines check above.
+- If the API still returns an error, don't retry blindly. Show the error to the user, say nothing was posted, and ask how to proceed.
 
 ## GitLab (`glab`)
-
-`glab api` expands `:id` to the current project.
 
 ### Context
 
 ```bash
-glab mr view <iid> -F json                # author, diff_refs, web_url
-glab api user | jq -r .username           # who is reviewing
-glab api "projects/:id/merge_requests/<iid>/approvals" \
-  | jq -r '.approved_by[].user.username'  # has the user already approved?
+glab mr view <iid> -R <project-url> -F json        # author, diff_refs, web_url
+glab api user | jq -r .username                    # who is reviewing
+glab api "projects/<project>/merge_requests/<iid>/approvals" \
+  | jq -r '.approved_by[].user.username'           # has the user already approved?
 ```
 
 Read `diff_refs.base_sha`, `start_sha` and `head_sha` from the MR.
@@ -76,37 +132,51 @@ Read `diff_refs.base_sha`, `start_sha` and `head_sha` from the MR.
 ### Duplicate detection
 
 ```bash
-glab api "projects/:id/merge_requests/<iid>/discussions" --paginate \
+glab api "projects/<project>/merge_requests/<iid>/discussions" --paginate \
   | jq '.[].notes[] | select(.author.username=="<me>") | {path: .position.new_path, line: .position.new_line, body}'
 ```
 
-Use the same rule as on GitHub: same path, same line, same label and similar text means skip it and list it.
+- **Notes with a position:** match on `path` and `line`.
+- **Notes without one** (summary notes): parse the `` - `path:line` **Label:** ... `` lines in their `body`.
+
+Then use the same rule as on GitHub: same path, same line, same label and similar text means skip it and list it.
 
 ### Inline comment
 
-One call per comment:
+One call per comment. `glab api` doesn't turn `position[...]` field names into a nested object on a POST, so send a JSON body with `--input`. Write the payload to a file in the scratchpad:
 
-```bash
-glab api "projects/:id/merge_requests/<iid>/discussions" -X POST \
-  -f body='**Important:** ...' \
-  -f 'position[position_type]=text' \
-  -f 'position[base_sha]=<base_sha>' \
-  -f 'position[start_sha]=<start_sha>' \
-  -f 'position[head_sha]=<head_sha>' \
-  -f 'position[new_path]=src/foo.ts' \
-  -f 'position[old_path]=src/foo.ts' \
-  -F 'position[new_line]=42'
+```json
+{
+  "body": "**Important:** ...",
+  "position": {
+    "position_type": "text",
+    "base_sha": "<base_sha>",
+    "start_sha": "<start_sha>",
+    "head_sha": "<head_sha>",
+    "old_path": "src/foo.ts",
+    "new_path": "src/foo.ts",
+    "new_line": 42
+  }
+}
 ```
 
-If a position is rejected, move that comment into the summary note.
+```bash
+glab api "projects/<project>/merge_requests/<iid>/discussions" -X POST \
+  -H 'Content-Type: application/json' --input comment.json
+```
+
+Check that the created note has a `position`. If the API rejects the position, or returns a note without one, move that comment into the summary note.
 
 ### Summary note and approval
 
 ```bash
-glab mr note <iid> -m "<verdict line + unanchored comments>"
+glab mr note <iid> -R <project-url> -m "<verdict line + unanchored comments>"
 ```
+
+This matches the GitHub event: open Questions block approval.
 
 | Verdict | Action |
 |---|---|
-| `OK to merge` | `glab mr approve <iid>` |
-| `Changes expected` or `Blocks merge` | Post the comments and the summary note. Don't approve. If the user already approved, offer `glab mr revoke <iid>` and wait for them to confirm. |
+| `OK to merge`, no Questions being posted | `glab mr approve <iid> -R <project-url>` |
+| `OK to merge` with Questions being posted | Post the comments and the summary note. Don't approve. |
+| `Changes expected` or `Blocks merge` | Post the comments and the summary note. Don't approve. If the user already approved, offer `glab mr revoke <iid> -R <project-url>` and wait for them to confirm. |

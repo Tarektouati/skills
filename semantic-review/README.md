@@ -23,7 +23,7 @@ Add `-g` to install globally (user-level) instead of into the current project. P
 - Crucial and Important comments must state the concrete failure. Questions are honest questions only: the agent answers what it can from the repo first and never asks "did you consider…?"
 - Remark and Hint are capped at about 3 per review. Crucial, Important and Question are never capped.
 - Diffs over about 1,500 changed lines are reviewed commit by commit, and each finding is checked against the final state, so a bug fixed in a later commit isn't reported.
-- Nothing is posted until you pick the comments and confirm. Duplicates of your earlier comments are skipped. The GitHub review event or the GitLab approval follows from the verdict.
+- Nothing is posted until you pick the comments and confirm. Duplicates of your earlier comments are skipped. The GitHub review event or the GitLab approval follows from the verdict, and open Questions hold back approval on both.
 
 ## Prompt examples
 

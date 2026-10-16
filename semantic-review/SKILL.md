@@ -12,11 +12,13 @@ Review a change and prefix every comment with one of six labels from [Semantic C
 
 Take the first one that applies:
 
-1. **An explicit argument**: a PR or MR number or URL, a branch, a path, or a pasted diff.
+1. **An explicit argument**: a PR or MR number or URL, a branch, a path, or a pasted diff. A path means that path's diff against the merge-base with the default branch, plus its uncommitted changes, not the whole file.
 2. **The branch's open PR or MR**: `gh pr view --json number,url` or `glab mr view -F json`.
 3. **The local branch**: the diff against the merge-base with the default branch (`git merge-base HEAD origin/<default>`), plus uncommitted changes.
 
-The first output line names the target: `Reviewing PR #123 (owner/repo)`, `Reviewing feat/x vs main (merge-base abc1234) + uncommitted changes`, or `Reviewing pasted diff`.
+For a PR or MR target, take the repository from the URL (not from the current checkout), and review the PR or MR head, not the local working tree. `references/posting.md` (Repository, and Diff and commits) has the commands.
+
+The first output line names the target: `Reviewing PR #123 (owner/repo)`, `Reviewing feat/x vs main (merge-base abc1234) + uncommitted changes`, `Reviewing src/api/ vs main (merge-base abc1234)`, or `Reviewing pasted diff`.
 
 ## 2. Review
 
@@ -31,8 +33,8 @@ Run this checklist on the changed lines and on whatever those lines directly aff
 Stay in scope. Don't review untouched code that the change doesn't affect.
 
 **Large diffs (more than about 1,500 changed lines):**
-- Review commit by commit (`git log --reverse <base>..HEAD`, then `git show <sha>`) so that no file is skipped.
-- A later commit may fix what an earlier one broke. Check every finding against the final state, drop any that are already fixed, and anchor each comment to final HEAD lines.
+- Review commit by commit (`git log --reverse <base>..<head>`, then `git show <sha>`) so that no file is skipped. For a PR or MR, `<head>` is the fetched PR or MR head, not local `HEAD` (see `references/posting.md`).
+- A later commit may fix what an earlier one broke. Check every finding against the final state, drop any that are already fixed, and anchor each comment to lines in the final `<head>`.
 - If commits aren't available (a pasted diff or a single commit), go file by file instead. Skip lockfiles, generated files and vendored files, and list what you skipped.
 
 Do the review yourself as a single agent. Don't spawn subagents.
@@ -82,10 +84,11 @@ For local and pasted-diff targets, stop here.
 ## 5. Post (PR or MR targets only)
 
 1. Ask which comments to post. Accept edits such as `post 1,3,5`, `post all`, `drop 4` or `relabel 2 as Suggestion`. Recompute the verdict after any relabeling and show the final list.
-2. Fetch the user's existing comments and skip any duplicate: the same label at the same line with similar text. List the ones you skipped.
-3. Show what will be posted: the comments, the review body, and the GitHub event or GitLab action. Then wait for an explicit confirmation. Use `AskUserQuestion` if you have it; otherwise ask in plain text and end your turn.
-4. Post using `references/posting.md`:
-   - Inline comments keep their `**Label:**` prefix. The verdict and any comments that can't be anchored go in the review body.
+2. Fetch the user's existing comments, inline comments and review bodies or summary notes alike, and skip any duplicate: the same label at the same line with similar text. List the ones you skipped.
+3. Check each comment's line against the diff hunks. Any comment that can't be anchored moves into the review body now, not after a failed post.
+4. Show what will be posted: the comments, the review body, and the GitHub event or GitLab action. Then wait for an explicit confirmation. Use `AskUserQuestion` if you have it; otherwise ask in plain text and end your turn.
+5. Post using `references/posting.md`:
+   - Inline comments keep their `**Label:**` prefix. The verdict and any comments that can't be anchored go in the review body, one `` - `path:line` **Label:** ... `` line each.
    - **GitHub event**, first match wins: open Questions or your own PR → `COMMENT`; any Crucial or Important → `REQUEST_CHANGES`; only Suggestion, Hint or Remark → `APPROVE`.
-   - **GitLab**: `OK to merge` → `glab mr approve`. Otherwise post the comments and a summary note without approving. If the user already approved, offer to revoke the approval and wait for them to confirm.
-5. Report what was posted, with the review or note URL, and anything that was skipped or moved into the body.
+   - **GitLab**: `OK to merge` with no open Questions → `glab mr approve`. Otherwise post the comments and a summary note without approving. If the verdict is `Changes expected` or `Blocks merge` and the user already approved, offer to revoke the approval and wait for them to confirm.
+6. Report what was posted, with the review or note URL, and anything that was skipped or moved into the body.

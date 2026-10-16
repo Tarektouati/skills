@@ -12,16 +12,20 @@ Review a change and prefix every comment with one of six labels from [Semantic C
 
 Take the first one that applies:
 
-1. **An explicit argument**: a PR or MR number or URL, a branch, a path, or a pasted diff. A path means that path's diff against the merge-base with the default branch (`git diff <merge-base> -- <path>`), plus its untracked files, not the whole file.
-2. **The branch's open PR or MR**: `gh pr view --json number,url` or `glab mr view -F json`.
-3. **The local branch**: ask the user which branch to diff against. Suggest the default branch from `git symbolic-ref --short refs/remotes/origin/HEAD` (for example `origin/main`). Use `AskUserQuestion` if you have it; otherwise ask in plain text and end your turn. Then:
-   - `base=$(git merge-base HEAD <branch>)`
+1. **An explicit argument**: a PR or MR number or URL, a branch, a path, or a pasted diff.
+   - A **branch** means that branch's own commits. Ask which branch to review it against (see "Ask for the base" below), then `base=$(git merge-base <base> <branch>)` and `git diff "$base" <branch>`. Include uncommitted and untracked changes only when `<branch>` is the checked-out branch.
+   - A **path** means that path's diff against the merge-base with the default branch (`git diff <merge-base> -- <path>`), plus its untracked files, not the whole file.
+2. **The branch's PR or MR**: `gh pr view --json number,url,state` or `glab mr view -F json` (read `state`). Merged and closed PRs and MRs are still reviewed. The target line shows their state.
+3. **The local branch**: ask which branch to diff against (see "Ask for the base" below). Then:
+   - `base=$(git merge-base HEAD <base>)`
    - `git diff "$base"` covers both the committed and the uncommitted changes to tracked files.
    - `git ls-files --others --exclude-standard` lists the untracked files. Review each of them as fully added.
 
+**Ask for the base**: suggest the default branch from `git symbolic-ref --short refs/remotes/origin/HEAD` (for example `origin/main`). Use `AskUserQuestion` if you have it; otherwise ask in plain text and end your turn.
+
 For a PR or MR target, take the repository from the URL (not from the current checkout), and review the PR or MR head, not the local working tree. `references/posting.md` (Repository, and Diff and commits) has the commands.
 
-The first output line names the target: `Reviewing PR #123 (owner/repo)`, `Reviewing feat/x vs origin/main (merge-base abc1234) + uncommitted and untracked changes`, `Reviewing src/api/ vs main (merge-base abc1234)`, or `Reviewing pasted diff`.
+The first output line names the target. For a PR or MR it includes the state (`open`, `draft`, `merged` or `closed`): `Reviewing PR #123 (owner/repo, open)`, `Reviewing MR !45 (group/project, merged)`, `Reviewing feat/x vs origin/main (merge-base abc1234) + uncommitted and untracked changes`, `Reviewing src/api/ vs main (merge-base abc1234)`, or `Reviewing pasted diff`.
 
 ## 2. Review
 
@@ -36,8 +40,9 @@ Run this checklist on the changed lines and on whatever those lines directly aff
 Stay in scope. Don't review untouched code that the change doesn't affect.
 
 **Large diffs (more than about 1,500 changed lines):**
-- Review commit by commit (`git log --reverse <base>..<head>`, then `git show <sha>`) so that no file is skipped. For a PR or MR, `<head>` is the fetched PR or MR head, not local `HEAD` (see `references/posting.md`).
-- A later commit may fix what an earlier one broke. Check every finding against the final state, drop any that are already fixed, and anchor each comment to lines in the final `<head>`.
+- Review the committed work commit by commit (`git log --reverse <base>..<head>`, then `git show <sha>`) so that no file is skipped. For a PR or MR, `<head>` is the fetched PR or MR head, not local `HEAD` (see `references/posting.md`).
+- For a local target that includes uncommitted or untracked changes, finish with one final pass over all of them at once (`git diff HEAD` plus the untracked files). Before that pass, tell the user it covers the uncommitted and untracked changes and may take longer.
+- A later commit, or the uncommitted changes, may fix what an earlier commit broke. Check every finding against the final state (the PR or MR head, or the working tree for a local target), and drop any that are already fixed. Anchor each comment to a line in that final state, or to the base side for a removed line (`path:-line`, see step 4).
 - If commits aren't available (a pasted diff or a single commit), go file by file instead. Skip lockfiles, generated files and vendored files, and list what you skipped.
 
 Do the review yourself as a single agent. Don't spawn subagents.
@@ -63,7 +68,7 @@ Rules:
 ## 4. Output
 
 ```
-Reviewing PR #123 (owner/repo)
+Reviewing PR #123 (owner/repo, open)
 Changes expected (2 Important)
 
 1. src/api/users.ts:42
@@ -79,7 +84,7 @@ Changes expected (2 Important)
 
 - The target line comes first, then the verdict line: `Blocks merge (N Crucial)`, `Changes expected (N Important)` or `OK to merge`.
 - Then the comments, numbered and grouped by severity: Crucial, Important, Question, Suggestion, Hint, Remark.
-- Each comment is `path:line`, then `**Label:** <one direct sentence>`, then an optional short reason or fix.
+- Each comment is `path:line`, then `**Label:** <one direct sentence>`, then an optional short reason or fix. `line` is a line of the new version. For a removed line, write `path:-line` (for example `src/api/users.ts:-40`), where `line` is the line number in the base version.
 - If there are no findings, print the target line and `OK to merge`. For a PR or MR target, go on to step 5 and offer to approve, with no comments to post.
 
 For local and pasted-diff targets, stop here.
@@ -92,7 +97,7 @@ For local and pasted-diff targets, stop here.
 4. Show what will be posted: the comments, the review body, and the GitHub event or GitLab action (including the LGTM fallback if approval is refused). Then wait for an explicit confirmation. Use `AskUserQuestion` if you have it; otherwise ask in plain text and end your turn.
 5. Post using `references/posting.md`:
    - Inline comments keep their `**Label:**` prefix. The verdict and any comments that can't be anchored go in the review body, one `` - `path:line` **Label:** ... `` line each.
-   - **GitHub event**, first match wins: open Questions → `COMMENT`; any Crucial or Important → `REQUEST_CHANGES` (`COMMENT` on your own PR); only Suggestion, Hint or Remark, or no comments → `APPROVE`.
+   - **GitHub event**, first match wins: any Crucial or Important → `REQUEST_CHANGES` (`COMMENT` on your own PR); open Questions → `COMMENT`; only Suggestion, Hint or Remark, or no comments → `APPROVE`. Open Questions never weaken a request for changes; they only hold back an approval.
    - **GitLab**: `OK to merge` with no open Questions → `glab mr approve`. Otherwise post the comments and a summary note without approving. If the verdict is `Changes expected` or `Blocks merge` and the user already approved, offer to revoke the approval and wait for them to confirm.
    - **Approval refused**: always try to approve when the rules say so, even on your own PR or MR. If GitHub or GitLab refuses (your own PR or MR, or project rules), post a comment or note saying approval wasn't possible and why, and that the change is LGTM. `references/posting.md` has the exact steps.
 6. Report what was posted, with the review or note URL, and anything that was skipped or moved into the body.

@@ -54,12 +54,15 @@ glab api "projects/<project>/repository/commits/<sha>/diff"
 
 ## Anchorable lines
 
-Check every comment's `path:line` against the hunks of the PR or MR diff before posting. A line can be anchored when it falls inside a hunk on the new side: for `@@ -a,b +c,d @@`, that's lines `c` to `c+d-1` of the new file. Move every other comment into the body or summary note before the first post, and tell the user which ones moved.
+Check every comment's location against the hunks of the PR or MR diff before posting. Walk each hunk `@@ -a,b +c,d @@` from `-a` and `+c`. A `+` line advances only the new counter, a `-` line advances only the old counter, and a context (` `) line advances both.
 
-GitLab also needs to know what kind of line it is. Walk the hunk from `-a` and `+c`. A `+` line advances only the new counter, a `-` line advances only the old counter, and a context (` `) line advances both. For each anchored comment, record:
+- `path:line` (new side) can be anchored when the walk reaches new line `line` on a `+` or context line.
+- `path:-line` (old side, a removed line) can be anchored when the walk reaches old line `line` on a `-` line. A removed file has only `-` lines. Put the comment on the new side instead if the line is context, not removed.
 
-- whether the line is **added** (`+`) or **context** (` `),
-- the `old_line` (context lines only) and the `new_line`,
+Move every other comment into the body or summary note before the first post, and tell the user which ones moved. For each anchored comment, record:
+
+- whether the line is **added** (`+`), **removed** (`-`) or **context** (` `),
+- its `old_line` (removed and context lines) and `new_line` (added and context lines),
 - the file's `old_path` and `new_path`. They differ for a renamed file.
 
 ## GitHub (`gh`)
@@ -79,12 +82,12 @@ Read both your inline comments and your review bodies:
 
 ```bash
 gh api "repos/<owner>/<repo>/pulls/<n>/comments" --paginate \
-  --jq '.[] | select(.user.login=="<me>") | {path, line, original_line, body}'
+  --jq '.[] | select(.user.login=="<me>") | {path, side, line, original_line, body}'
 gh api "repos/<owner>/<repo>/pulls/<n>/reviews" --paginate \
   --jq '.[] | select(.user.login=="<me>") | .body'
 ```
 
-- **Inline comments:** an existing comment matches on line when `line` equals the new comment's line, or, if `line` is `null` (the comment is outdated), when `original_line` does.
+- **Inline comments:** an existing comment matches on line when its `side` matches (`LEFT` for a `path:-line` comment, `RIGHT` otherwise) and `line` equals the new comment's line, or, if `line` is `null` (the comment is outdated), when `original_line` does.
 - **Review bodies:** parse the `` - `path:line` **Label:** ... `` lines written there.
 
 Skip a new comment when an existing one by you has the same path, the same line, the same `**Label:**` prefix, and similar text (same point, maybe reworded). List the skipped ones to the user. There's no other state tracking.
@@ -93,11 +96,11 @@ Skip a new comment when an existing one by you has the same path, the same line,
 
 Check these in order and take the first that matches:
 
-1. Questions still open → `COMMENT`.
-2. Any Crucial or Important → `REQUEST_CHANGES`, or `COMMENT` on your own PR (GitHub rejects `REQUEST_CHANGES` there).
+1. Any Crucial or Important → `REQUEST_CHANGES`, or `COMMENT` on your own PR (GitHub rejects `REQUEST_CHANGES` there).
+2. Questions still open → `COMMENT`.
 3. Only Suggestion, Hint or Remark, or no comments at all → `APPROVE`.
 
-"Open Questions" means the comments being posted include at least one Question.
+"Open Questions" means the comments being posted include at least one Question. They only turn an approval into `COMMENT`. They never weaken a request for changes, because the article's Crucial means "This code must not be merged".
 
 ### Approval refused
 
@@ -124,12 +127,16 @@ gh api "repos/<owner>/<repo>/pulls/<n>/reviews" -X POST --input review.json
   "body": "Changes expected (2 Important)\n\n- `src/bar.ts:7` **Suggestion:** ... (unanchored comments go here)",
   "comments": [
     { "path": "src/foo.ts", "line": 42, "side": "RIGHT", "body": "**Important:** ..." },
-    { "path": "src/foo.ts", "start_line": 50, "line": 54, "side": "RIGHT", "body": "**Suggestion:** ..." }
+    { "path": "src/foo.ts", "start_line": 50, "line": 54, "side": "RIGHT", "body": "**Suggestion:** ..." },
+    { "path": "src/foo.ts", "line": 40, "side": "LEFT", "body": "**Important:** ..." }
   ]
 }
 ```
 
-- `line` is the line number in the PR's head version of the file. Every `line` (and `start_line`) must have passed the anchorable-lines check above.
+- `path` is the file's path in the PR's head version, even for a `LEFT` comment on a renamed file.
+- `side: "RIGHT"` with `line` from the PR's head version is for `path:line` (added and context lines).
+- `side: "LEFT"` with `line` from the base version is for `path:-line` (removed lines). The third comment above is `src/foo.ts:-40`.
+- Every `line` (and `start_line`) must have passed the anchorable-lines check above.
 - If the API still returns an error, don't retry blindly. Show the error to the user, say nothing was posted, and ask how to proceed.
 
 ## GitLab (`glab`)
@@ -149,10 +156,10 @@ Read `diff_refs.base_sha`, `start_sha` and `head_sha` from the MR.
 
 ```bash
 glab api "projects/<project>/merge_requests/<iid>/discussions" --paginate \
-  | jq '.[].notes[] | select(.author.username=="<me>") | {path: .position.new_path, line: .position.new_line, body}'
+  | jq '.[].notes[] | select(.author.username=="<me>") | {new_path: .position.new_path, new_line: .position.new_line, old_path: .position.old_path, old_line: .position.old_line, body}'
 ```
 
-- **Notes with a position:** match on `path` and `line`.
+- **Notes with a position:** a note with a `new_line` matches a `path:line` comment on `new_path` and `new_line`. A note with only an `old_line` matches a `path:-line` comment on `old_path` and `old_line`.
 - **Notes without one** (summary notes): parse the `` - `path:line` **Label:** ... `` lines in their `body`.
 
 Then use the same rule as on GitHub: same path, same line, same label and similar text means skip it and list it.
@@ -187,6 +194,7 @@ One call per comment. `glab api` doesn't turn `position[...]` field names into a
 ```
 
 - **Added line:** send `new_line` only and leave out `old_line`.
+- **Removed line** (`path:-line`): send `old_line` only and leave out `new_line`.
 - **Context (unchanged) line:** send both `old_line` and `new_line`. GitLab rejects a context line that has only `new_line`.
 - Always send the file's real `old_path`. For a file that wasn't renamed, it equals `new_path`.
 
@@ -200,10 +208,12 @@ Check that the created note has a `position`. If the API rejects the position, o
 ### Summary note and approval
 
 ```bash
-glab mr note <iid> -R <project-url> -m "<verdict line + unanchored comments>"
+glab mr note create <iid> -R <project-url> -m "<verdict line + unanchored comments>" --resolvable=false
 ```
 
-This matches the GitHub event: open Questions block approval. Post in this order: inline comments, then the approval (if any), then the summary note. That way the note can report the outcome of the approval.
+`--resolvable=false` keeps the summary note from blocking merge when the project requires all threads to be resolved. (`glab mr note <iid> -m` is deprecated.)
+
+This matches the GitHub event: Crucial or Important rules out approval, and open Questions hold back an otherwise approving review. Post in this order: inline comments, then the approval (if any), then the summary note. That way the note can report the outcome of the approval.
 
 | Verdict | Action |
 |---|---|

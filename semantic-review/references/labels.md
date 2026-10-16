@@ -72,4 +72,4 @@ Discipline:
 | any Important, no Crucial | `Changes expected (N Important)` |
 | otherwise | `OK to merge` |
 
-Open Questions don't change the verdict line, but they do affect the GitHub review event (see `posting.md`).
+Open Questions don't change the verdict line, but they do affect the GitHub review event and block GitLab approval (see `posting.md`).

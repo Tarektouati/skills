@@ -7,6 +7,7 @@ Personal agent skills. Each top-level folder is one skill (`<name>/SKILL.md`).
 | [`flock`](flock/) | Herdr control plus git worktree management (spawn, status, cleanup, sync, hand-back), with a confirmation step before any change. See [prompt examples](flock/README.md#prompt-examples). |
 | [`keep-digging`](keep-digging/) | Learn unfamiliar code or systems fast by asking "why" layer after layer until you hit bedrock (Tibo Sottiaux's five-whys learning mode). See [prompt examples](keep-digging/README.md#prompt-examples). |
 | [`semantic-review`](semantic-review/) | Code review where every comment carries a label (Remark, Question, Hint, Suggestion, Important, Crucial) from m31coding's Semantic Code Reviews, with optional posting to GitHub PRs or GitLab MRs. See [prompt examples](semantic-review/README.md#prompt-examples). |
+| [`tell-my-manager`](tell-my-manager/) | Turn a session's findings, or a pasted message, into a short paste-ready Slack message for your manager: status, impact and risk, and any ask, with no code or jargon. See [prompt examples](tell-my-manager/README.md#prompt-examples). |
 
 ## Install
 
